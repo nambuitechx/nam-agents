@@ -18,11 +18,18 @@ AGENT_DIR="$(cd "$SCRIPT_DIR/../src/agents" && pwd)"
 INFRA_DIR="$(cd "$SCRIPT_DIR/../infra" && pwd)"
 ACCOUNT_ID="$(echo "$ECR_REPO_URL" | cut -d. -f1)"
 REPO_NAME="$(basename "$ECR_REPO_URL")"
+BUILDX_BUILDER="nam-agents-builder"
+
+cleanup_buildx_builder() {
+  docker buildx use default >/dev/null 2>&1 || true
+  docker buildx rm "$BUILDX_BUILDER" >/dev/null 2>&1 || true
+}
+trap cleanup_buildx_builder EXIT
 
 echo "==> Building ARM64 image from $AGENT_DIR"
 cd "$AGENT_DIR"
 uv lock
-docker buildx create --use --name nam-agents-builder 2>/dev/null || docker buildx use nam-agents-builder
+docker buildx create --use --name "$BUILDX_BUILDER" 2>/dev/null || docker buildx use "$BUILDX_BUILDER"
 docker buildx build --platform linux/arm64 -t "${ECR_REPO_URL}:${IMAGE_TAG}" --load .
 
 echo "==> Logging in to ECR ($REGION)"

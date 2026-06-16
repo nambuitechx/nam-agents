@@ -291,6 +291,7 @@ Run the full deploy flow again (`terraform apply` → push image). A new `random
 - **Two-step deploy is required.** `terraform apply` alone does not build your agent — it only provisions AWS resources and a placeholder image. Always run `deploy-image.sh` (or the `deploy_image_command` output) before invoking the agent.
 - **Re-deploy is one command.** After the first deploy, agent code changes only need `deploy_image_command` — no Terraform unless you change infra or runtime env vars.
 - **ARM64 only.** AgentCore Runtime requires `linux/arm64`. `deploy-image.sh` builds with `docker buildx --platform linux/arm64`.
+- **Buildx builder container.** `deploy-image.sh` creates a temporary BuildKit builder (`nam-agents-builder`) for ARM64 cross-builds and removes it when the script exits (success or failure). If you still see `buildx_buildkit_nam-agents-builder0` from an older run, remove it once with `docker buildx rm nam-agents-builder`.
 - **Model access.** Ensure your AWS account has access to the Bedrock model in `bedrock_model_id` (inference profile or foundation model) in the target region.
 - **Unique resource names.** Each `terraform apply` on a fresh state generates names like `nam-agents-a1b2c3d4` (ECR) and `nam_agents_a1b2c3d4_general` (runtime). This avoids name collisions when you destroy and re-deploy in the same account.
 - **Config split.** Deployed runtimes read Bedrock settings from Terraform-injected env vars. Local development uses `.env` (copy from `src/agents/.env.example`) or defaults in `settings.py`.
