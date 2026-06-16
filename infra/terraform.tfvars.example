@@ -1,0 +1,17 @@
+region       = "ap-southeast-1"
+project_name = "nam_agents"
+image_tag    = "latest"
+
+# Optional: pin a suffix or override generated names (defaults are unique per apply)
+# name_suffix         = "a1b2c3d4"
+# agent_runtime_name  = "nam_agents_a1b2c3d4_general"
+# ecr_repository_name = "nam-agents-a1b2c3d4"
+
+bedrock_model_id = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
+# bedrock_temperature = "0.3"
+# bedrock_max_tokens  = "4096"
+
+tags = {
+  Project = "nam-agents"
+  Env     = "dev"
+}
