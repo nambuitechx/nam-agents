@@ -6,11 +6,13 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-cache
 
-COPY general_agent.py settings.py runtime.py ./
+COPY core/ core/
+COPY configs/ configs/
+COPY runtimes/ runtimes/
 
 RUN useradd -m -u 1000 agent && chown -R agent:agent /app
 USER agent
 
 EXPOSE 8080
 
-CMD ["uv", "run", "python", "runtime.py"]
+CMD ["uv", "run", "python", "-m", "runtimes.simple"]

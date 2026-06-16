@@ -1,12 +1,12 @@
 """Amazon Bedrock AgentCore Runtime entry point.
 
 Exposes /invocations and /ping via the bedrock-agentcore SDK (no AgentCore CLI).
-Run locally:  uv run python runtime.py
+Run locally:  uv run python -m runtimes.simple
 """
 
 from bedrock_agentcore.runtime import BedrockAgentCoreApp
 
-from general_agent import create_agent
+from core.agent import create_agent
 
 app = BedrockAgentCoreApp()
 agent = create_agent()

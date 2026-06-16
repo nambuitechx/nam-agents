@@ -1,7 +1,7 @@
 """Interactive CLI for the general Q&A agent."""
 
-from general_agent import agent
-from settings import get_settings
+from core.agent import agent
+from configs.settings import get_settings
 
 
 def main() -> None:

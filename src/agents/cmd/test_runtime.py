@@ -1,9 +1,9 @@
 """Interactive CLI for a deployed Bedrock AgentCore Runtime (aioboto3).
 
 Usage:
-    uv run python test_runtime.py arn:aws:bedrock-agentcore:...
-    AGENT_RUNTIME_ARN=arn:... uv run python test_runtime.py
-    uv run python test_runtime.py --region ap-southeast-1 arn:...
+    uv run python -m cmd.test_runtime arn:aws:bedrock-agentcore:...
+    AGENT_RUNTIME_ARN=arn:... uv run python -m cmd.test_runtime
+    uv run python -m cmd.test_runtime --region ap-southeast-1 arn:...
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import uuid
 
 import aioboto3
 
-from settings import get_settings
+from configs.settings import get_settings
 
 _ARN_REGION_RE = re.compile(r"^arn:aws:bedrock-agentcore:([^:]+):")
 

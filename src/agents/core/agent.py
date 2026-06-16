@@ -3,7 +3,7 @@
 from strands import Agent
 from strands.models import BedrockModel
 
-from settings import Settings, get_settings
+from configs.settings import Settings, get_settings
 
 SYSTEM_PROMPT = """You are a helpful assistant that answers general questions clearly and accurately.
 
