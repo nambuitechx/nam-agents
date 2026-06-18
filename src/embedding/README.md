@@ -30,19 +30,34 @@ Each document is split into chunks (≤ 2048 chars), embedded (1024-dim vectors,
 
 ## Setup
 
-```bash
-cd src/embedding
-cp .env.example .env
-uv sync
-```
-
-Start local OpenSearch from the repo root:
+From repo root:
 
 ```bash
-make up
+make embed-env && make embed-sync
+make up   # local OpenSearch on :9200
 ```
+
+Or manually from `src/embedding/`: `cp .env.example .env` and `uv sync`.
 
 Requires AWS credentials with Bedrock access to `cohere.embed-multilingual-v3` in `ap-southeast-1`.
+
+## Local usage
+
+Makefile wrappers (from repo root — run `make help` for all targets):
+
+| Target | Purpose |
+|--------|---------|
+| `make embed-env` | Create `src/embedding/.env` from example |
+| `make embed-sync` | Install dependencies (`uv sync`) |
+| `make embed-server` | FastAPI on `:8090` |
+| `make embed-health` | Health check (`GET /health`) |
+| `make embed-list` | List all indexed documents (CLI) |
+| `make embed FILE=…` | Embed a file (CLI); optional `DOCUMENT_ID=`, `REPLACE=true` |
+| `make embed-remove DOCUMENT_ID=…` | Remove a document (CLI) |
+| `make embed-upload FILE=…` | Upload via API (server must be running) |
+| `make embed-cli ARGS="…"` | Pass-through to CLI subcommands |
+
+Direct `uv` equivalents below.
 
 ## Document IDs
 
@@ -56,6 +71,10 @@ On **embed**, `document_id` is optional:
 Remove and list always require an explicit `document_id`.
 
 ## CLI
+
+Makefile: `make embed FILE=…`, `make embed-list`, `make embed-remove DOCUMENT_ID=…`, or `make embed-cli ARGS="list --document-id …"`.
+
+From `src/embedding/`:
 
 ```bash
 # Embed — server generates document_id
@@ -80,9 +99,11 @@ Supported formats: `.txt`, `.md`, `.pdf`, `.docx`, `.doc` (legacy `.doc` require
 ## FastAPI server
 
 ```bash
-uv run python -m api.server
+make embed-server
 # → http://localhost:8090
 ```
+
+Or from `src/embedding/`: `uv run python -m api.server`.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -92,13 +113,17 @@ uv run python -m api.server
 | `GET` | `/documents` | List indexed documents |
 | `GET` | `/documents/{document_id}/chunks` | List chunks |
 
-Example upload:
+Example upload (with `make embed-server` running):
 
 ```bash
-# Server-generated document_id
-curl -X POST http://localhost:8090/documents -F "file=@sample.md"
+make embed-upload FILE=sample.md
+make embed-upload FILE=sample.md DOCUMENT_ID=550e8400-e29b-41d4-a716-446655440000
+```
 
-# Client-provided document_id
+Or via curl:
+
+```bash
+curl -X POST http://localhost:8090/documents -F "file=@sample.md"
 curl -X POST http://localhost:8090/documents \
   -F "document_id=550e8400-e29b-41d4-a716-446655440000" \
   -F "file=@sample.md"

@@ -73,6 +73,6 @@ HTTP contract: `POST /invocations` with `{"prompt":"..."}` → `{"result":"..."}
 
 1. `cd src/agents && uv sync` succeeds.
 2. Logic changes: `make cli` or `make http` + `make invoke-local` behave sensibly.
-3. Embedding changes: `cd src/embedding && uv sync`; CLI/API against local OpenSearch (`make up`) behave sensibly.
+3. Embedding changes: `make embed-sync`; `make embed` / `make embed-server` + `make embed-health` against local OpenSearch (`make up`) behave sensibly.
 4. Infra changes: `terraform validate` in `infra/simple/` and/or `infra/kb/`.
 5. Dockerfile/runtime changes: ARM64 build + `make deploy-simple` / `make deploy-kb`; KB stack needs `opensearch_url` in `infra/kb/terraform.tfvars`.

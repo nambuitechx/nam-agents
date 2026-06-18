@@ -47,8 +47,8 @@ make http                  # local AgentCore HTTP server on :8080
 Embedding (separate uv project — see [src/embedding/README.md](src/embedding/README.md)):
 
 ```bash
-make up                                      # OpenSearch on :9200
-cd src/embedding && uv sync && uv run python -m api.server   # :8090
+make up && make embed-sync && make embed-server   # OpenSearch :9200 + API :8090
+make embed FILE=sample.md                         # index a document (CLI)
 ```
 
 ```bash

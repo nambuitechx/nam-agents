@@ -71,7 +71,7 @@ curl -X POST http://localhost:8080/invocations \
 
 ### Knowledge-base agent
 
-Uses the `search_knowledge_base` tool to retrieve chunks from OpenSearch (same index as [embedding service](../embedding/README.md)). Start OpenSearch and index documents before testing.
+Uses the `search_knowledge_base` tool to retrieve chunks from OpenSearch (same index as [embedding service](../embedding/README.md)). Start OpenSearch (`make up`) and index documents (`make embed FILE=…` — see [embedding README](../embedding/README.md#local-usage)) before testing.
 
 ```bash
 # Interactive CLI

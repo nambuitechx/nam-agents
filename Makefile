@@ -6,6 +6,7 @@ COMPOSE := docker compose --env-file $(COMPOSE_ENV)
 UV := cd $(AGENTS_DIR) && uv
 
 EMBEDDING_DIR := src/embedding
+EMBED_ENV := $(EMBEDDING_DIR)/.env
 UV_EMBED := cd $(EMBEDDING_DIR) && uv
 
 INFRA_SIMPLE := infra/simple
@@ -14,7 +15,7 @@ INFRA_KB := infra/kb
 .PHONY: help env up down ps logs restart clean \
         sync cli kb-cli http kb-http test-runtime test-runtime-simple test-runtime-kb \
         ping invoke-local \
-        embed-sync embed-server \
+        embed-env embed-sync embed-cli embed-server embed-health embed-list embed embed-remove embed-upload \
         tf-init-simple tf-apply-simple tf-output-simple \
         tf-init-kb tf-apply-kb tf-output-kb \
         deploy-simple deploy-kb invoke-simple invoke-kb
@@ -65,11 +66,51 @@ http: sync ## Local HTTP runtime on :8080 (simple)
 kb-http: sync ## Knowledge-base HTTP runtime on :8080
 	$(UV) run python -m runtimes.knowledge_base
 
+ping: ## Health check local HTTP runtime
+	curl -sf http://localhost:8080/ping
+
+invoke-local: ## Smoke test local HTTP runtime
+	curl -sf -X POST http://localhost:8080/invocations \
+		-H "Content-Type: application/json" \
+		-d '{"prompt": "Hello"}'
+
+# --- Embedding development ---
+
+embed-env: $(EMBED_ENV) ## Create src/embedding/.env from example if missing
+
+$(EMBED_ENV):
+	cp $(EMBEDDING_DIR)/.env.example $@
+
 embed-sync: ## Install embedding package dependencies
 	$(UV_EMBED) sync
 
+embed-cli: embed-sync ## Embedding CLI (usage: make embed-cli ARGS="list --all")
+	$(UV_EMBED) run python -m cmd.cli $(ARGS)
+
 embed-server: embed-sync ## Embedding FastAPI server on :8090
 	$(UV_EMBED) run python -m api.server
+
+embed-health: ## Health check local embedding server
+	curl -sf http://localhost:8090/health
+
+embed-list: embed-sync ## List all indexed documents (CLI)
+	$(UV_EMBED) run python -m cmd.cli list --all
+
+embed: embed-sync ## Embed a file (usage: make embed FILE=path/to/doc.md [DOCUMENT_ID=uuid] [REPLACE=true])
+	@test -n "$(FILE)" || (echo 'Usage: make embed FILE=path/to/doc.md [DOCUMENT_ID=uuid] [REPLACE=true]'; exit 1)
+	$(UV_EMBED) run python -m cmd.cli embed --file "$(FILE)" \
+		$(if $(DOCUMENT_ID),--document-id "$(DOCUMENT_ID)",) \
+		$(if $(filter true,$(REPLACE)),--replace,)
+
+embed-remove: embed-sync ## Remove document (usage: make embed-remove DOCUMENT_ID=uuid)
+	@test -n "$(DOCUMENT_ID)" || (echo 'Usage: make embed-remove DOCUMENT_ID=uuid'; exit 1)
+	$(UV_EMBED) run python -m cmd.cli remove --document-id "$(DOCUMENT_ID)"
+
+embed-upload: ## Upload file via API (usage: make embed-upload FILE=sample.md [DOCUMENT_ID=uuid])
+	@test -n "$(FILE)" || (echo 'Usage: make embed-upload FILE=path/to/doc.md [DOCUMENT_ID=uuid]'; exit 1)
+	curl -sf -X POST http://localhost:8090/documents \
+		$(if $(DOCUMENT_ID),-F "document_id=$(DOCUMENT_ID)",) \
+		-F "file=@$(FILE)"
 
 test-runtime: test-runtime-kb ## Interactive CLI against deployed KB runtime
 
@@ -80,14 +121,6 @@ test-runtime-simple: sync ## Interactive CLI against deployed simple runtime
 test-runtime-kb: sync ## Interactive CLI against deployed KB runtime
 	@AGENT_RUNTIME_ARN="$$(terraform -chdir=$(INFRA_KB) output -raw agent_runtime_arn)" \
 		$(UV) run python -m cmd.test_runtime
-
-ping: ## Health check local HTTP runtime
-	curl -sf http://localhost:8080/ping
-
-invoke-local: ## Smoke test local HTTP runtime
-	curl -sf -X POST http://localhost:8080/invocations \
-		-H "Content-Type: application/json" \
-		-d '{"prompt": "Hello"}'
 
 # --- Deploy & infrastructure ---
 
