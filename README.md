@@ -36,32 +36,228 @@ Configure credentials once: `aws configure` or AWS SSO. Remote state is stored i
 
 ## Quick start
 
-Run `make help` from the repo root for all targets.
+Run `make help` from the repo root for all Makefile targets.
+
+| Topic | Doc |
+|-------|-----|
+| **Local embed + test agent** (below) | This section |
+| Agent package (env vars, extending) | [src/agents/README.md](src/agents/README.md) |
+| Embedding service (CLI, API details) | [src/embedding/README.md](src/embedding/README.md) |
+| Deploy to AWS | [Deploy agents](#deploy-agents), [infra/README.md](infra/README.md) |
+| AI assistant guidance | [AGENTS.md](AGENTS.md) |
+
+### Before you start
+
+From the **repo root** (`nam-agents/`):
+
+1. **AWS credentials** — `aws configure` or SSO. You need Bedrock access in `ap-southeast-1` for:
+   - **Embedding:** `cohere.embed-multilingual-v3`
+   - **Agent:** `apac.anthropic.claude-sonnet-4-20250514-v1:0` (or your chosen model)
+2. **Tools** — Python 3.12+, [uv](https://docs.astral.sh/uv/), Docker (with Compose), [make](https://www.gnu.org/software/make/).
+3. **Two separate Python projects** — agents live in `src/agents/`, embedding in `src/embedding/`. Each has its own `uv sync`.
+
+---
+
+### Local development quickstart
+
+Two common paths:
+
+| Path | What you get | Needs OpenSearch? |
+|------|----------------|-------------------|
+| **A — Knowledge-base (RAG) agent** | Agent answers using documents you index | Yes |
+| **B — Simple agent** | General Q&A via Bedrock only | No |
+
+#### Path A — Index documents, then test the KB agent
+
+**1. Start OpenSearch**
 
 ```bash
-make up                    # local Postgres + OpenSearch
-make sync && make cli      # agent deps + interactive Bedrock CLI
-make http                  # local AgentCore HTTP server on :8080
+# make
+make up
+make ps          # wait until opensearch is healthy
+
+# or without make
+cp compose/.env.example compose/.env
+docker-compose --env-file compose/.env up -d
+curl -sf http://localhost:9200/_cluster/health
 ```
 
-Embedding (separate uv project — see [src/embedding/README.md](src/embedding/README.md)):
+OpenSearch listens on **`:9200`**. Postgres also starts on `:5432` but is not required for embedding or the KB agent today.
+
+**2. Set up the embedding package**
 
 ```bash
-make up && make embed-sync && make embed-server   # OpenSearch :9200 + API :8090
-make embed FILE=sample.md                         # index a document (CLI)
+# make
+make embed-env embed-sync
+
+# or without make
+cp src/embedding/.env.example src/embedding/.env
+cd src/embedding && uv sync && cd ../..
 ```
+
+Defaults in `src/embedding/.env` point at `http://localhost:9200` and index `nam-documents` — leave them unless you changed Compose ports.
+
+**3. Index a document**
+
+Use any supported file (`.txt`, `.md`, `.pdf`, `.docx`, `.doc`). Example with a markdown file you create:
 
 ```bash
-make tf-init-kb && make tf-apply-kb   # first-time AWS provision (KB runtime)
-make deploy-kb                # build ARM64 KB image, push ECR, update runtime
-make invoke-kb PROMPT="Hello" # smoke test deployed KB runtime
+echo '# Remote work policy\nEmployees may work remotely up to 3 days per week.' > /tmp/policy.md
+
+# make — CLI talks to OpenSearch directly (no API server needed)
+make embed FILE=/tmp/policy.md
+
+# or without make (from repo root)
+cd src/embedding && uv run python -m cmd.cli embed --file /tmp/policy.md
 ```
 
-For the **simple** (general Q&A) runtime: `make tf-init-simple`, `make tf-apply-simple`, `make deploy-simple`, `make invoke-simple`. See [infra/README.md](infra/README.md).
+The command prints a **`document_id`** (UUID). Save it if you want to remove or replace the doc later.
 
-- **Agent development** (setup, env vars, `uv` commands, extending): [src/agents/README.md](src/agents/README.md)
-- **Embedding service** (CLI, FastAPI, OpenSearch): [src/embedding/README.md](src/embedding/README.md)
-- **AI assistant guidance** (where to edit, coding rules): [AGENTS.md](AGENTS.md)
+**4. Confirm the index**
+
+```bash
+# make
+make embed-list
+
+# or without make
+cd src/embedding && uv run python -m cmd.cli list --all
+```
+
+**5. Set up the agents package**
+
+```bash
+# make
+make sync
+
+# or without make
+cd src/agents && uv sync && cd ../..
+cp src/agents/.env.example src/agents/.env   # optional; defaults match embedding index
+```
+
+Ensure `OPENSEARCH_URL=http://localhost:9200` and `OPENSEARCH_INDEX_NAME=nam-documents` in `src/agents/.env` (these are the defaults).
+
+**6. Test the KB agent**
+
+Pick **one** of these — all call Bedrock + search OpenSearch:
+
+**Interactive CLI** (single terminal):
+
+```bash
+# make
+make kb-cli
+
+# or without make
+cd src/agents && uv run python -m cmd.kb_main
+```
+
+Type a question, e.g. *"What does our policy say about remote work?"*
+
+**HTTP runtime** (two terminals — same contract as production AgentCore):
+
+Terminal 1 — start the server:
+
+```bash
+# make
+make kb-http
+
+# or without make
+cd src/agents && uv run python -m runtimes.knowledge_base
+```
+
+Terminal 2 — health check and invoke:
+
+```bash
+# make
+make ping
+make invoke-local PROMPT="What does our policy say about remote work?"
+
+# or without make
+curl -sf http://localhost:8080/ping
+curl -sf -X POST http://localhost:8080/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What does our policy say about remote work?"}'
+```
+
+**Optional — embedding API instead of CLI**
+
+If you prefer HTTP uploads, run the embedding server and use the API:
+
+```bash
+# Terminal 1
+make embed-server          # → http://localhost:8090
+
+# Terminal 2
+make embed-health
+make embed-upload FILE=/tmp/policy.md
+
+# or without make
+cd src/embedding && uv run python -m api.server
+curl -sf http://localhost:8090/health
+curl -sf -X POST http://localhost:8090/documents -F "file=@/tmp/policy.md"
+```
+
+Then test the KB agent the same way as step 6 (`make kb-cli` or `make kb-http`).
+
+---
+
+#### Path B — Simple agent (no documents, no OpenSearch)
+
+General Q&A only — Bedrock, no retrieval:
+
+```bash
+# make
+make sync && make cli              # interactive REPL
+
+# or HTTP (terminal 1 + 2)
+make http                          # terminal 1 — :8080
+make ping && make invoke-local     # terminal 2
+
+# or without make
+cd src/agents && uv sync
+uv run python -m cmd.main                          # interactive
+uv run python -m runtimes.simple                   # HTTP server
+curl -sf http://localhost:8080/ping
+curl -sf -X POST http://localhost:8080/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "What is machine learning?"}'
+```
+
+---
+
+#### Make vs raw commands (cheat sheet)
+
+All commands assume **repo root** unless noted.
+
+| Task | Make | Raw (`uv` / `curl`) |
+|------|------|---------------------|
+| Start OpenSearch | `make up` | `docker-compose --env-file compose/.env up -d` |
+| Install agent deps | `make sync` | `cd src/agents && uv sync` |
+| Install embedding deps | `make embed-sync` | `cd src/embedding && uv sync` |
+| Create embedding `.env` | `make embed-env` | `cp src/embedding/.env.example src/embedding/.env` |
+| Index a file (CLI) | `make embed FILE=path/to/doc.md` | `cd src/embedding && uv run python -m cmd.cli embed --file path/to/doc.md` |
+| List indexed docs | `make embed-list` | `cd src/embedding && uv run python -m cmd.cli list --all` |
+| Remove a document | `make embed-remove DOCUMENT_ID=uuid` | `cd src/embedding && uv run python -m cmd.cli remove --document-id uuid` |
+| Embedding API server | `make embed-server` | `cd src/embedding && uv run python -m api.server` |
+| Upload via API | `make embed-upload FILE=doc.md` | `curl -F "file=@doc.md" http://localhost:8090/documents` |
+| Simple agent CLI | `make cli` | `cd src/agents && uv run python -m cmd.main` |
+| KB agent CLI | `make kb-cli` | `cd src/agents && uv run python -m cmd.kb_main` |
+| Simple HTTP runtime | `make http` | `cd src/agents && uv run python -m runtimes.simple` |
+| KB HTTP runtime | `make kb-http` | `cd src/agents && uv run python -m runtimes.knowledge_base` |
+| Ping local agent | `make ping` | `curl -sf http://localhost:8080/ping` |
+
+**Ports:** OpenSearch `:9200`, agent HTTP `:8080`, embedding API `:8090`.
+
+---
+
+#### Deploy to AWS (after local testing)
+
+```bash
+make tf-init-kb && make tf-apply-kb   # first-time KB runtime provision
+make deploy-kb                        # build ARM64 image, push ECR, update runtime
+make invoke-kb PROMPT="Summarize our indexed documents."
+```
+
+Simple (non-KB) runtime: `make tf-init-simple`, `make tf-apply-simple`, `make deploy-simple`, `make invoke-simple`. See [infra/README.md](infra/README.md).
 
 ---
 

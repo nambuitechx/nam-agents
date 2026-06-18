@@ -69,10 +69,10 @@ kb-http: sync ## Knowledge-base HTTP runtime on :8080
 ping: ## Health check local HTTP runtime
 	curl -sf http://localhost:8080/ping
 
-invoke-local: ## Smoke test local HTTP runtime
+invoke-local: ## Smoke test local HTTP runtime (usage: make invoke-local [PROMPT="..."])
 	curl -sf -X POST http://localhost:8080/invocations \
 		-H "Content-Type: application/json" \
-		-d '{"prompt": "Hello"}'
+		-d '{"prompt": "$(or $(PROMPT),Hello)"}'
 
 # --- Embedding development ---
 

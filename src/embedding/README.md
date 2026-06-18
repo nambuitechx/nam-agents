@@ -2,7 +2,19 @@
 
 Async document embedding with **Amazon Bedrock Cohere** (`cohere.embed-multilingual-v3`) and **OpenSearch** k-NN storage.
 
-**Repo-level docs:** [local OpenSearch](../../README.md#local-services-postgresql--opensearch), [project structure](../../README.md#project-structure).
+**Repo-level docs:** [Local development quickstart](../../README.md#local-development-quickstart), [Makefile cheat sheet](../../README.md#make-vs-raw-commands-cheat-sheet), [local OpenSearch](../../README.md#local-services-postgresql--opensearch).
+
+## Quick start (local)
+
+Full step-by-step (OpenSearch → embed → test with KB agent): **[README — Local development quickstart](../../README.md#local-development-quickstart)**.
+
+Minimal commands from repo root:
+
+```bash
+make up && make embed-env embed-sync
+make embed FILE=/path/to/doc.md
+make embed-list
+```
 
 ## Architecture
 
@@ -30,6 +42,8 @@ Each document is split into chunks (≤ 2048 chars), embedded (1024-dim vectors,
 
 ## Setup
 
+See [README — Before you start](../../README.md#before-you-start) for AWS and tool prerequisites.
+
 From repo root:
 
 ```bash
@@ -42,6 +56,10 @@ Or manually from `src/embedding/`: `cp .env.example .env` and `uv sync`.
 Requires AWS credentials with Bedrock access to `cohere.embed-multilingual-v3` in `ap-southeast-1`.
 
 ## Local usage
+
+Canonical walkthrough: [README — Path A (embed + KB agent)](../../README.md#path-a--index-documents-then-test-the-kb-agent).
+
+**CLI vs API:** `make embed` / `uv run … cmd.cli embed` talk to OpenSearch directly — **no API server required**. Use `make embed-server` only for HTTP uploads (`make embed-upload` or `POST /documents`).
 
 Makefile wrappers (from repo root — run `make help` for all targets):
 

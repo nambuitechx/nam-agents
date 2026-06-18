@@ -2,7 +2,19 @@
 
 General-purpose Q&A agent on [Strands Agents](https://strandsagents.com/) and [Amazon Bedrock](https://aws.amazon.com/bedrock/). Runs locally (CLI / HTTP), and in a container on Bedrock AgentCore Runtime.
 
-**Repo-level docs:** [Makefile targets](../../README.md#quick-start), [deploy](../../README.md#deploy-agents), [local Postgres/OpenSearch](../../README.md#local-services-postgresql--opensearch). Document embedding into OpenSearch: [../embedding/README.md](../embedding/README.md).
+**Repo-level docs:** [Local development quickstart](../../README.md#local-development-quickstart), [Makefile cheat sheet](../../README.md#make-vs-raw-commands-cheat-sheet), [deploy](../../README.md#deploy-agents). Document embedding: [../embedding/README.md](../embedding/README.md).
+
+## Quick start (local)
+
+Full step-by-step (OpenSearch → embed → KB agent): **[README — Local development quickstart](../../README.md#local-development-quickstart)**.
+
+Minimal commands from repo root:
+
+```bash
+make up && make embed-sync && make embed FILE=/path/to/doc.md
+make sync && make kb-cli                    # interactive KB agent
+# or: make kb-http  (terminal 1) + make ping (terminal 2)
+```
 
 ## Layout
 
@@ -46,7 +58,16 @@ Aliases: `STRANDS_MODEL_ID`, `AWS_REGION`. Deployed containers get Bedrock chat 
 
 ## Local usage
 
-Makefile wrappers: `make cli`, `make http`, `make ping`, `make invoke-local` (from repo root).
+Canonical walkthrough: [README — Local development quickstart](../../README.md#local-development-quickstart). Makefile wrappers below assume **repo root**.
+
+| Goal | Make | Raw (`uv`) |
+|------|------|------------|
+| Simple interactive CLI | `make cli` | `cd src/agents && uv run python -m cmd.main` |
+| KB interactive CLI | `make kb-cli` | `cd src/agents && uv run python -m cmd.kb_main` |
+| Simple HTTP `:8080` | `make http` | `cd src/agents && uv run python -m runtimes.simple` |
+| KB HTTP `:8080` | `make kb-http` | `cd src/agents && uv run python -m runtimes.knowledge_base` |
+| Health check | `make ping` | `curl -sf http://localhost:8080/ping` |
+| Invoke HTTP | `make invoke-local PROMPT="..."` | see curl examples below |
 
 ### Interactive CLI
 
@@ -71,7 +92,7 @@ curl -X POST http://localhost:8080/invocations \
 
 ### Knowledge-base agent
 
-Uses the `search_knowledge_base` tool to retrieve chunks from OpenSearch (same index as [embedding service](../embedding/README.md)). Start OpenSearch (`make up`) and index documents (`make embed FILE=…` — see [embedding README](../embedding/README.md#local-usage)) before testing.
+Uses the `search_knowledge_base` tool to retrieve chunks from OpenSearch (same index as [embedding service](../embedding/README.md)). **Prerequisites:** OpenSearch running (`make up`) and at least one document indexed — see [embedding quickstart](../../README.md#path-a--index-documents-then-test-the-kb-agent).
 
 ```bash
 # Interactive CLI
@@ -93,15 +114,16 @@ Requires `bedrock-agentcore:InvokeAgentRuntime` — see [invoke policy](../../RE
 
 ```bash
 # from repo root
-make test-runtime
+make test-runtime-kb          # KB runtime (default)
+make test-runtime-simple      # simple runtime
 
 # or manually from src/agents/
-export AGENT_RUNTIME_ARN="$(terraform -chdir=../../infra output -raw agent_runtime_arn)"
+export AGENT_RUNTIME_ARN="$(terraform -chdir=../../infra/kb output -raw agent_runtime_arn)"
 uv run python -m cmd.test_runtime
 uv run python -m cmd.test_runtime --region ap-southeast-1 "$AGENT_RUNTIME_ARN"
 ```
 
-One-shot smoke test: `make invoke PROMPT="..."` ([../../README.md](../../README.md#test-the-deployed-agent)).
+One-shot smoke test: `make invoke-kb PROMPT="..."` / `make invoke-simple PROMPT="..."` ([../../README.md#test-the-deployed-agent](../../README.md#test-the-deployed-agent)).
 
 ### Use in code
 
