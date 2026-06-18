@@ -13,10 +13,10 @@ data "aws_iam_policy_document" "agent_runtime_assume_role" {
 resource "aws_iam_role" "agent_runtime" {
   name               = "${local.name_prefix}_agent_runtime"
   assume_role_policy = data.aws_iam_policy_document.agent_runtime_assume_role.json
+  tags               = var.tags
 }
 
 data "aws_iam_policy_document" "agent_runtime" {
-  # ECR pull (AgentCore fetches the container image)
   statement {
     sid    = "ECRAuthToken"
     effect = "Allow"
@@ -37,7 +37,6 @@ data "aws_iam_policy_document" "agent_runtime" {
     resources = [aws_ecr_repository.agent.arn]
   }
 
-  # CloudWatch Logs
   statement {
     sid    = "CloudWatchLogs"
     effect = "Allow"
@@ -54,7 +53,6 @@ data "aws_iam_policy_document" "agent_runtime" {
     ]
   }
 
-  # X-Ray tracing (optional but recommended by AWS)
   statement {
     sid    = "XRayTracing"
     effect = "Allow"
@@ -67,7 +65,6 @@ data "aws_iam_policy_document" "agent_runtime" {
     resources = ["*"]
   }
 
-  # Bedrock model invocation (agent calls Claude via inference profile)
   statement {
     sid    = "BedrockModelInvocation"
     effect = "Allow"
@@ -88,7 +85,6 @@ resource "aws_iam_role_policy" "agent_runtime" {
   policy = data.aws_iam_policy_document.agent_runtime.json
 }
 
-# Example caller policy — attach to Lambda/ECS/task role that invokes the runtime.
 data "aws_iam_policy_document" "invoke_agent_runtime" {
   statement {
     sid    = "InvokeAgentRuntime"
@@ -97,8 +93,8 @@ data "aws_iam_policy_document" "invoke_agent_runtime" {
       "bedrock-agentcore:InvokeAgentRuntime",
     ]
     resources = [
-      aws_bedrockagentcore_agent_runtime.general.agent_runtime_arn,
-      "${aws_bedrockagentcore_agent_runtime.general.agent_runtime_arn}/runtime-endpoint/*",
+      aws_bedrockagentcore_agent_runtime.this.agent_runtime_arn,
+      "${aws_bedrockagentcore_agent_runtime.this.agent_runtime_arn}/runtime-endpoint/*",
     ]
   }
 }
@@ -106,4 +102,5 @@ data "aws_iam_policy_document" "invoke_agent_runtime" {
 resource "aws_iam_policy" "invoke_agent_runtime" {
   name   = "${local.name_prefix}_invoke_agent_runtime"
   policy = data.aws_iam_policy_document.invoke_agent_runtime.json
+  tags   = var.tags
 }

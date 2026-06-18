@@ -6,6 +6,8 @@ resource "aws_ecr_repository" "agent" {
   image_scanning_configuration {
     scan_on_push = true
   }
+
+  tags = var.tags
 }
 
 resource "aws_ecr_lifecycle_policy" "agent" {
@@ -28,7 +30,6 @@ resource "aws_ecr_lifecycle_policy" "agent" {
   })
 }
 
-# Bootstrap placeholder so the runtime can be created before the real agent image is pushed.
 resource "null_resource" "bootstrap_image" {
   triggers = {
     repository_url = aws_ecr_repository.agent.repository_url

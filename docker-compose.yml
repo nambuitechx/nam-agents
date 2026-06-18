@@ -1,0 +1,62 @@
+# Copy compose/.env.example to compose/.env, then:
+#   docker compose --env-file compose/.env up -d
+#
+# From the host machine use localhost (e.g. postgresql://...@localhost:5432/...).
+services:
+  postgres:
+    image: postgres:16-alpine
+    env_file:
+      - compose/.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nam}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nam}
+      POSTGRES_DB: ${POSTGRES_DB:-nam_agents}
+    ports:
+      - "0.0.0.0:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - nam_local
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-nam} -d ${POSTGRES_DB:-nam_agents}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  opensearch:
+    image: opensearchproject/opensearch:2.19.0
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      network.host: 0.0.0.0
+      OPENSEARCH_JAVA_OPTS: ${OPENSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
+    ports:
+      - "0.0.0.0:${OPENSEARCH_PORT:-9200}:9200"
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
+    networks:
+      - nam_local
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -sf http://localhost:9200/_cluster/health || exit 1",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  nam_local:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  opensearch_data:

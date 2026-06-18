@@ -6,12 +6,17 @@ General-purpose AI agents built with the [Strands Agents SDK](https://strandsage
 
 ```
 nam-agents/
-├── infra/                 # Terraform — ECR, IAM, AgentCore Runtime
+├── Makefile               # Convenience targets — run `make help`
+├── docker-compose.yml     # Local PostgreSQL + OpenSearch
+├── compose/               # Local service config (.env.example)
+├── infra/                 # Terraform — one stack per runtime → [infra/README.md](infra/README.md)
+│   ├── modules/agent-runtime/
+│   ├── simple/            # General Q&A AgentCore runtime
+│   └── kb/                # Knowledge-base AgentCore runtime
 ├── scripts/               # Build, push, and invoke helpers
-│   ├── deploy-image.sh    # Build ARM64 image, push to ECR, update runtime
-│   └── invoke-runtime.sh  # Test a deployed runtime from the CLI
-└── src/agents/            # Python agent package (see src/agents/README.md)
-    └── test_runtime.py    # Interactive CLI against a deployed runtime
+└── src/
+    ├── agents/            # Main agent package → [src/agents/README.md](src/agents/README.md)
+    └── embedding/         # Document embedding → OpenSearch → [src/embedding/README.md](src/embedding/README.md)
 ```
 
 ## Prerequisites
@@ -19,298 +24,171 @@ nam-agents/
 | Tool | Purpose |
 |------|---------|
 | Python 3.12+ and [uv](https://docs.astral.sh/uv/) | Local agent development |
+| [make](https://www.gnu.org/software/make/) | Convenience commands (`make help`) |
+| [Docker](https://www.docker.com/) with Compose | Local PostgreSQL + OpenSearch; ARM64 image builds |
 | [Terraform](https://www.terraform.io/) >= 1.5 | Provision AWS resources |
-| [Docker](https://www.docker.com/) with buildx | ARM64 image builds (deploy + first `terraform apply`) |
 | AWS CLI | ECR login, runtime invoke, bootstrap image push |
 | AWS account | Bedrock model access + Bedrock AgentCore enabled in your region |
 
-Configure credentials once: `aws configure` or AWS SSO.
+Configure credentials once: `aws configure` or AWS SSO. Remote state is stored in S3 — see `infra/versions.tf`.
 
-Remote state is stored in S3 — backend config lives in `infra/versions.tf`.
+---
+
+## Quick start
+
+Run `make help` from the repo root for all targets.
+
+```bash
+make up                    # local Postgres + OpenSearch
+make sync && make cli      # agent deps + interactive Bedrock CLI
+make http                  # local AgentCore HTTP server on :8080
+```
+
+Embedding (separate uv project — see [src/embedding/README.md](src/embedding/README.md)):
+
+```bash
+make up                                      # OpenSearch on :9200
+cd src/embedding && uv sync && uv run python -m api.server   # :8090
+```
+
+```bash
+make tf-init-kb && make tf-apply-kb   # first-time AWS provision (KB runtime)
+make deploy-kb                # build ARM64 KB image, push ECR, update runtime
+make invoke-kb PROMPT="Hello" # smoke test deployed KB runtime
+```
+
+For the **simple** (general Q&A) runtime: `make tf-init-simple`, `make tf-apply-simple`, `make deploy-simple`, `make invoke-simple`. See [infra/README.md](infra/README.md).
+
+- **Agent development** (setup, env vars, `uv` commands, extending): [src/agents/README.md](src/agents/README.md)
+- **Embedding service** (CLI, FastAPI, OpenSearch): [src/embedding/README.md](src/embedding/README.md)
+- **AI assistant guidance** (where to edit, coding rules): [AGENTS.md](AGENTS.md)
+
+---
+
+## Local services (PostgreSQL + OpenSearch)
+
+Local backing services for development. **OpenSearch** (`:9200`) is used by the [embedding package](src/embedding/README.md). Postgres is available for future use.
+
+```bash
+make up      # start Postgres (:5432) and OpenSearch (:9200)
+make ps      # status
+make down    # stop, keep data
+make clean   # stop and wipe volumes
+```
+
+`make env` copies `compose/.env.example` → `compose/.env`. Use `localhost` from the host; connection URLs are in the example file.
 
 ---
 
 ## Deploy agents
 
-Deployment is **two steps**: provision AWS infrastructure with Terraform, then build and push the agent container.
+Two steps — do not skip the image push.
 
-### Step 1 — Configure
+### 1. Configure & provision
 
-```bash
-cp infra/terraform.tfvars.example infra/terraform.tfvars
-```
+Each runtime has its own Terraform stack under `infra/simple/` and `infra/kb/` ([infra/README.md](infra/README.md)).
 
-Edit `infra/terraform.tfvars` as needed:
-
-| Variable | Purpose |
-|----------|---------|
-| `region` | AWS region for ECR, AgentCore, and Bedrock |
-| `bedrock_model_id` | Model ID injected into the runtime container |
-| `image_tag` | Container tag (default `latest`) |
-| `tags` | Applied to all AWS resources |
-
-Resource names (ECR repo, runtime, IAM roles) get a **unique suffix** per stack via `random_id`. Pin `name_suffix` in `terraform.tfvars` if you need stable names across re-deploys.
-
-### Step 2 — Provision infrastructure
+**Knowledge-base runtime:**
 
 ```bash
-cd infra
-terraform init
-terraform apply
+cp infra/kb/terraform.tfvars.example infra/kb/terraform.tfvars
+# edit opensearch_url, bedrock_model_id, image_tag, tags
+make tf-init-kb && make tf-apply-kb
 ```
 
-**First apply requires Docker and AWS CLI** — Terraform pushes a placeholder Alpine image to ECR so the AgentCore runtime can be created before the real agent image exists.
-
-This creates:
-
-- ECR repository
-- IAM execution role (ECR pull, CloudWatch Logs, Bedrock invoke)
-- AgentCore runtime (`aws_bedrockagentcore_agent_runtime`)
-- IAM policy for callers (`bedrock-agentcore:InvokeAgentRuntime`)
-
-Bedrock settings (`BEDROCK_MODEL_ID`, `BEDROCK_REGION`, etc.) are injected into the runtime by Terraform — see `infra/agent_runtime.tf`.
-
-### Step 3 — Push the agent image
-
-From the **repo root** (recommended):
+**Simple (general Q&A) runtime:**
 
 ```bash
-eval "$(terraform -chdir=infra output -raw deploy_image_command)"
+cp infra/simple/terraform.tfvars.example infra/simple/terraform.tfvars
+make tf-init-simple && make tf-apply-simple
 ```
 
-This runs `scripts/deploy-image.sh`, which:
+**First apply** needs Docker and AWS CLI — Terraform pushes a placeholder Alpine image to ECR so each runtime can be created before the real agent image exists.
 
-1. Builds the ARM64 image from `src/agents/`
-2. Pushes it to your ECR repository
-3. Calls `bedrock-agentcore-control update-agent-runtime` so AgentCore pulls the new image
+Creates per stack: ECR repo, IAM execution role, AgentCore runtime, caller invoke policy. The KB stack also injects OpenSearch and embedding env vars. OpenSearch must be reachable from AgentCore (PUBLIC network mode).
 
-**After pulling infra changes** (or if `eval` fails with a bad script path), refresh Terraform outputs once:
+Pin the same `name_suffix` in both `terraform.tfvars` files for aligned resource naming.
+
+### 2. Push the agent image
 
 ```bash
-terraform -chdir=infra apply
+make deploy-kb       # KB runtime (runtimes.knowledge_base)
+make deploy-simple   # simple runtime (runtimes.simple)
 ```
 
-No resource changes are expected — this updates stored outputs such as `deploy_image_command`.
+Each command runs that stack's `deploy_image_command` output (build with `RUNTIME_MODULE` build arg, push to stack ECR, update runtime).
 
-**Manual equivalent** (same result; replace `ap-southeast-1` with your `region` from `infra/terraform.tfvars`):
+### 3. Verify
 
 ```bash
-./scripts/deploy-image.sh ap-southeast-1 \
-  "$(terraform -chdir=infra output -raw ecr_repository_url)" \
-  latest
+make invoke-kb PROMPT="Summarize what our indexed documents say about remote work."
+make test-runtime-kb
+
+make invoke-simple PROMPT="What is Amazon Bedrock AgentCore?"
+make test-runtime-simple
 ```
 
-### Step 4 — Verify
-
-Quick one-shot test (AWS CLI):
-
-```bash
-./scripts/invoke-runtime.sh "What is Amazon Bedrock AgentCore?"
-```
-
-For an interactive chat session against the live runtime, use `test_runtime.py` — see [Test the deployed agent](#test-the-deployed-agent) below.
+See [Test the deployed agent](#test-the-deployed-agent) and [src/agents/README.md](src/agents/README.md) for details.
 
 ---
 
 ## Re-deploy agent
 
-Use this whenever you change **agent code** under `src/agents/` — Python sources, `pyproject.toml` / `uv.lock`, or `Dockerfile`. You do **not** need `terraform apply` for code-only changes.
+For changes under `src/agents/` only — no `terraform apply` needed.
 
-### 1. (Optional) Test locally
+1. (Optional) `make sync && make cli` or `make kb-cli` — see [src/agents/README.md](src/agents/README.md)
+2. `make deploy-kb` and/or `make deploy-simple`
+3. `make invoke-kb` / `make invoke-simple` or `make test-runtime-kb` / `make test-runtime-simple`
 
-```bash
-cd src/agents
-uv sync
-uv run python main.py          # interactive CLI against Bedrock directly
-uv run python runtime.py       # local AgentCore HTTP server on :8080
-```
+| Change | Action |
+|--------|--------|
+| Agent code only | `make deploy-kb` and/or `make deploy-simple` |
+| Model ID, timeouts, runtime env | Edit stack `terraform.tfvars` → `make tf-apply-kb` / `make tf-apply-simple` |
+| IAM, ECR, runtime settings | `make tf-apply-kb` / `make tf-apply-simple` |
+| Code + infra | `terraform apply` in affected stack(s), then deploy |
 
-### 2. Build, push, and update the runtime
+**Versioned tags:** pass a tag to `deploy-image.sh` and set `image_tag` in the stack's `terraform.tfvars`.
 
-From the **repo root**:
-
-```bash
-eval "$(terraform -chdir=infra output -raw deploy_image_command)"
-```
-
-Or manually:
-
-```bash
-./scripts/deploy-image.sh ap-southeast-1 \
-  "$(terraform -chdir=infra output -raw ecr_repository_url)" \
-  latest
-```
-
-Docker rebuilds the image, pushes to ECR, and the script updates the existing AgentCore runtime to use the new container URI. Expect a few minutes for the runtime to pull and start the new image.
-
-**Versioned tags** — to keep `latest` unchanged, pass a tag as the third argument and set `image_tag` in `terraform.tfvars` if Terraform should track it:
-
-```bash
-./scripts/deploy-image.sh ap-southeast-1 \
-  "$(terraform -chdir=infra output -raw ecr_repository_url)" \
-  v1.2.0
-```
-
-### 3. Verify the new build
-
-```bash
-./scripts/invoke-runtime.sh "Summarize what changed in this deploy."
-```
-
-Or an interactive session:
-
-```bash
-export AGENT_RUNTIME_ARN="$(terraform -chdir=infra output -raw agent_runtime_arn)"
-cd src/agents && uv run python test_runtime.py
-```
-
-### When you also need Terraform
-
-| Change | What to run |
-|--------|-------------|
-| Agent code only (`src/agents/`) | `eval "$(terraform -chdir=infra output -raw deploy_image_command)"` |
-| Model ID, timeouts, env vars | Edit `infra/terraform.tfvars`, then `terraform -chdir=infra apply` |
-| Infra (IAM, ECR, runtime settings) | `terraform -chdir=infra apply` |
-| Both code and infra | `terraform -chdir=infra apply`, then deploy the image (step 2 above) |
-
-### Image pushed but runtime update failed?
-
-If ECR push succeeded but `update-agent-runtime` errored, point the runtime at the image without rebuilding:
+**Runtime update failed after ECR push?** Use outputs from the relevant stack (`make tf-output-kb` or `make tf-output-simple`):
 
 ```bash
 aws bedrock-agentcore-control update-agent-runtime \
   --region ap-southeast-1 \
-  --agent-runtime-id "$(terraform -chdir=infra output -raw agent_runtime_id)" \
-  --role-arn "$(terraform -chdir=infra output -raw agent_runtime_execution_role_arn)" \
+  --agent-runtime-id "$(terraform -chdir=infra/kb output -raw agent_runtime_id)" \
+  --role-arn "$(terraform -chdir=infra/kb output -raw agent_runtime_execution_role_arn)" \
   --network-configuration "networkMode=PUBLIC" \
-  --agent-runtime-artifact "containerConfiguration={containerUri=$(terraform -chdir=infra output -raw ecr_repository_url):latest}"
+  --agent-runtime-artifact "containerConfiguration={containerUri=$(terraform -chdir=infra/kb output -raw ecr_repository_url):latest}"
 ```
 
-Replace `ap-southeast-1` and `:latest` if you use a different region or tag.
+Replace region and tag if different.
 
 ---
 
 ## Test the deployed agent
 
-After deploy (Steps 2–3), you can test the live AgentCore runtime from your machine.
+| Tool | Command | Best for |
+|------|---------|----------|
+| One-shot KB | `make invoke-kb PROMPT="..."` | RAG smoke test |
+| One-shot simple | `make invoke-simple PROMPT="..."` | General Q&A smoke test |
+| Interactive KB | `make test-runtime-kb` | Multi-turn KB debugging |
+| Interactive simple | `make test-runtime-simple` | Multi-turn Q&A debugging |
 
-### Option A — Interactive chat (`test_runtime.py`)
+Requires `bedrock-agentcore:InvokeAgentRuntime`. Attach `invoke_agent_runtime_policy_arn` (from `make tf-output-kb` or `make tf-output-simple`) to your IAM principal if invokes are denied.
 
-`src/agents/test_runtime.py` is a REPL that calls the deployed runtime via **aioboto3** — same conversational UX as `main.py`, but hits AWS instead of Bedrock directly.
-
-**Setup** (once):
-
-```bash
-cd src/agents
-uv sync
-```
-
-**Run** — from `src/agents/`:
-
-```bash
-# ARN from Terraform (recommended)
-export AGENT_RUNTIME_ARN="$(terraform -chdir=../../infra output -raw agent_runtime_arn)"
-uv run python test_runtime.py
-```
-
-Or pass the ARN directly:
-
-```bash
-uv run python test_runtime.py arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/...
-```
-
-Override region if needed (otherwise parsed from the ARN, or taken from `BEDROCK_REGION` / `.env`):
-
-```bash
-uv run python test_runtime.py --region ap-southeast-1 "$AGENT_RUNTIME_ARN"
-```
-
-Type questions at the `You:` prompt. Exit with `exit` or `quit`.
-
-**Requirements:** your AWS credentials need `bedrock-agentcore:InvokeAgentRuntime` on the runtime ARN. Attach the policy from `terraform -chdir=infra output -raw invoke_agent_runtime_policy_arn` to your IAM user or role if invokes are denied.
-
-### Option B — One-shot test (`invoke-runtime.sh`)
-
-From the repo root — no Python setup required:
-
-```bash
-export AGENT_RUNTIME_ARN="$(terraform -chdir=infra output -raw agent_runtime_arn)"
-./scripts/invoke-runtime.sh "What is Amazon Bedrock AgentCore?"
-```
-
-Prints the JSON response and exits.
-
-| Tool | Best for |
-|------|----------|
-| `test_runtime.py` | Multi-turn chat, debugging agent behavior |
-| `invoke-runtime.sh` | Quick smoke test, CI, shell scripts |
+Manual `uv` usage and ARN options: [src/agents/README.md](src/agents/README.md#test-deployed-agentcore-runtime).
 
 ---
 
 ## Destroy agents
 
-Teardown removes the runtime, ECR repo, and IAM resources managed by this stack.
-
 ```bash
-cd infra
-terraform destroy
+terraform -chdir=infra/kb destroy
+terraform -chdir=infra/simple destroy
 ```
 
-Confirm the plan when prompted. Terraform deletes resources in dependency order.
+Before destroying: detach `invoke_agent_runtime_policy_arn` from any manually attached principals; wait for idle sessions (default 15 min).
 
-### Before you destroy
-
-1. **Detach the invoke policy** if you attached `invoke_agent_runtime_policy_arn` to users or roles outside Terraform:
-   ```bash
-   terraform -chdir=infra output invoke_agent_runtime_policy_arn
-   ```
-2. **Wait for idle sessions** — active AgentCore sessions can block deletion. Default idle timeout is 15 minutes (`idle_runtime_session_timeout_seconds` in `terraform.tfvars`).
-
-### What is removed
-
-| Resource | Behavior |
-|----------|----------|
-| AgentCore runtime | Deleted |
-| ECR repository + images | Deleted (`force_delete = true`) |
-| IAM role and policies | Deleted unless still attached elsewhere |
-| Terraform state object in S3 | Deleted with the stack |
-
-### What is **not** removed
-
-- The **S3 state bucket** configured in `infra/versions.tf` — managed outside this stack
-- Any **IAM policy attachments** you made manually to other principals
-
-### Re-deploy after destroy
-
-Run the full deploy flow again (`terraform apply` → push image). A new `random_id` suffix is generated unless you pin `name_suffix` in `terraform.tfvars`.
-
----
-
-## Notes
-
-- **Two-step deploy is required.** `terraform apply` alone does not build your agent — it only provisions AWS resources and a placeholder image. Always run `deploy-image.sh` (or the `deploy_image_command` output) before invoking the agent.
-- **Re-deploy is one command.** After the first deploy, agent code changes only need `deploy_image_command` — no Terraform unless you change infra or runtime env vars.
-- **ARM64 only.** AgentCore Runtime requires `linux/arm64`. `deploy-image.sh` builds with `docker buildx --platform linux/arm64`.
-- **Buildx builder container.** `deploy-image.sh` creates a temporary BuildKit builder (`nam-agents-builder`) for ARM64 cross-builds and removes it when the script exits (success or failure). If you still see `buildx_buildkit_nam-agents-builder0` from an older run, remove it once with `docker buildx rm nam-agents-builder`.
-- **Model access.** Ensure your AWS account has access to the Bedrock model in `bedrock_model_id` (inference profile or foundation model) in the target region.
-- **Unique resource names.** Each `terraform apply` on a fresh state generates names like `nam-agents-a1b2c3d4` (ECR) and `nam_agents_a1b2c3d4_general` (runtime). This avoids name collisions when you destroy and re-deploy in the same account.
-- **Config split.** Deployed runtimes read Bedrock settings from Terraform-injected env vars. Local development uses `.env` (copy from `src/agents/.env.example`) or defaults in `settings.py`.
-- **No AgentCore CLI.** Image deploy uses `scripts/deploy-image.sh` calling the AWS API directly. Infrastructure is pure Terraform.
-- **Caller permissions.** To invoke the runtime from your own app, Lambda, or `test_runtime.py`, attach the policy from `invoke_agent_runtime_policy_arn` to the caller's IAM user or role.
-
----
-
-## Local development
-
-For agent code and local testing, see [src/agents/README.md](src/agents/README.md).
-
-```bash
-cd src/agents
-uv sync
-cp .env.example .env
-uv run python main.py          # interactive CLI
-uv run python runtime.py       # local AgentCore HTTP server on :8080
-```
+Removes each stack's runtime, ECR, IAM resources, and state object. Re-deploy with [Deploy agents](#deploy-agents).
 
 ---
 
@@ -323,28 +201,43 @@ Client (CLI / Lambda / App)
 Amazon Bedrock AgentCore Runtime
         │
         ├── pulls container from ECR
-        └── agent calls Bedrock models
-                │
-                ▼
-        Strands agent (general_agent.py)
+        └── Strands KB agent (src/agents/runtimes/knowledge_base.py) → Bedrock + OpenSearch
 ```
+
+**Embedding** (local / standalone): file upload → Bedrock Cohere embeddings → OpenSearch k-NN index. Details: [src/embedding/README.md](src/embedding/README.md#architecture).
+
+HTTP contract, container requirements, and local docker build: [src/agents/README.md](src/agents/README.md#agentcore-runtime).
+
+---
 
 ## Terraform outputs
 
-| Output | Description |
-|--------|-------------|
-| `name_suffix` | Unique suffix used in generated resource names |
-| `agent_runtime_name` | Runtime name for scripts and AWS API calls |
-| `ecr_repository_url` | Push target for the agent image |
-| `agent_runtime_arn` | ARN for `InvokeAgentRuntime` calls |
-| `agent_runtime_id` | Runtime ID for `update-agent-runtime` |
-| `agent_runtime_execution_role_arn` | Role assumed by the runtime |
-| `invoke_agent_runtime_policy_arn` | Attach to Lambda/ECS callers |
-| `deploy_image_command` | Ready-to-run build/push/update command (run from repo root) |
+`make tf-output-kb` / `make tf-output-simple` or `terraform -chdir=infra/<stack> output`
+
+| Output | Use |
+|--------|-----|
+| `deploy_image_command` | Build/push/update one-liner |
+| `ecr_repository_url` | Image push target |
+| `agent_runtime_arn` | `InvokeAgentRuntime` / `make test-runtime` |
+| `agent_runtime_id` | `update-agent-runtime` |
+| `agent_runtime_execution_role_arn` | Runtime IAM role |
+| `invoke_agent_runtime_policy_arn` | Attach to callers |
+| `name_suffix`, `agent_runtime_name` | Resource identification |
+
+---
+
+## Notes
+
+- `terraform apply` alone does not build the agent — always run `make deploy` before invoking.
+- ARM64 only. `deploy-image.sh` uses `docker buildx --platform linux/arm64` (temporary builder `nam-agents-builder`).
+- Deployed runtimes read Bedrock settings from Terraform. Local dev uses `src/agents/.env` or `settings.py` defaults.
+- Ensure Bedrock model access for `bedrock_model_id` in your region.
 
 ## Further reading
 
-- [Agent package docs](src/agents/README.md)
+- [src/agents/README.md](src/agents/README.md) — package setup, usage, extending
+- [src/embedding/README.md](src/embedding/README.md) — document embedding, CLI, FastAPI
+- [AGENTS.md](AGENTS.md) — guidance for AI coding assistants
 - [Strands + AgentCore deployment guide](https://strandsagents.com/docs/user-guide/deploy/deploy_to_bedrock_agentcore/python/)
 - [AgentCore Runtime without CLI](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/getting-started-custom.html)
 - [Terraform: aws_bedrockagentcore_agent_runtime](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/bedrockagentcore_agent_runtime)

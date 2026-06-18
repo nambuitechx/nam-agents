@@ -1,21 +1,13 @@
-resource "aws_bedrockagentcore_agent_runtime" "general" {
+resource "aws_bedrockagentcore_agent_runtime" "this" {
   agent_runtime_name = local.agent_runtime_name
-  description        = "General Q&A Strands agent on AgentCore Runtime"
+  description        = var.runtime_description
   role_arn           = aws_iam_role.agent_runtime.arn
 
   protocol_configuration {
     server_protocol = "HTTP"
   }
 
-  environment_variables = merge(
-    {
-      BEDROCK_MODEL_ID = var.bedrock_model_id
-      BEDROCK_REGION   = var.region
-      AWS_REGION       = var.region
-    },
-    var.bedrock_temperature != "" ? { BEDROCK_TEMPERATURE = var.bedrock_temperature } : {},
-    var.bedrock_max_tokens != "" ? { BEDROCK_MAX_TOKENS = var.bedrock_max_tokens } : {},
-  )
+  environment_variables = local.base_environment_variables
 
   agent_runtime_artifact {
     container_configuration {

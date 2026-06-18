@@ -26,6 +26,18 @@ class Settings(BaseSettings):
     temperature: float | None = Field(default=None, validation_alias="bedrock_temperature")
     max_tokens: int | None = Field(default=None, validation_alias="bedrock_max_tokens")
 
+    embedding_model_id: str = Field(
+        default="cohere.embed-multilingual-v3",
+        validation_alias=AliasChoices("embedding_model_id", "bedrock_embedding_model_id"),
+    )
+    embedding_dim: int = Field(default=1024)
+    opensearch_url: str = Field(default="http://localhost:9200")
+    opensearch_index_name: str = Field(
+        default="nam-documents",
+        validation_alias=AliasChoices("opensearch_index_name", "index_name"),
+    )
+    kb_search_top_k: int = Field(default=5)
+
 
 @lru_cache
 def get_settings() -> Settings:

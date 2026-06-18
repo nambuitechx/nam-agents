@@ -1,13 +1,26 @@
 variable "region" {
   description = "AWS region for AgentCore Runtime and Bedrock"
   type        = string
-  default     = "ap-southeast-1"
 }
 
 variable "project_name" {
   description = "Project prefix for resource names (use lowercase letters and underscores)"
   type        = string
-  default     = "nam_agents"
+}
+
+variable "runtime_slug" {
+  description = "Short runtime identifier used in resource names (e.g. simple, kb)"
+  type        = string
+}
+
+variable "runtime_description" {
+  description = "Human-readable AgentCore runtime description"
+  type        = string
+}
+
+variable "runtime_module" {
+  description = "Python module passed to the container entrypoint (e.g. runtimes.simple)"
+  type        = string
 }
 
 variable "name_suffix" {
@@ -37,7 +50,6 @@ variable "image_tag" {
 variable "bedrock_model_id" {
   description = "Bedrock model or inference profile ID passed to the agent container"
   type        = string
-  default     = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
 }
 
 variable "bedrock_temperature" {
@@ -50,6 +62,12 @@ variable "bedrock_max_tokens" {
   description = "Optional max output tokens (omit to use model default)"
   type        = string
   default     = ""
+}
+
+variable "environment_variables" {
+  description = "Additional container environment variables merged with Bedrock defaults"
+  type        = map(string)
+  default     = {}
 }
 
 variable "idle_runtime_session_timeout_seconds" {
@@ -67,7 +85,5 @@ variable "max_lifetime_seconds" {
 variable "tags" {
   description = "Tags applied to all resources"
   type        = map(string)
-  default = {
-    Project = "nam-agents"
-  }
+  default     = {}
 }

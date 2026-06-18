@@ -1,27 +1,33 @@
 # Agents package
 
-Python package for a general-purpose Q&A agent powered by [Strands Agents](https://strandsagents.com/) and [Amazon Bedrock](https://aws.amazon.com/bedrock/). The same agent runs locally (CLI), as an HTTP server (AgentCore contract), and in a container on Bedrock AgentCore Runtime.
+General-purpose Q&A agent on [Strands Agents](https://strandsagents.com/) and [Amazon Bedrock](https://aws.amazon.com/bedrock/). Runs locally (CLI / HTTP), and in a container on Bedrock AgentCore Runtime.
 
-## Files
+**Repo-level docs:** [Makefile targets](../../README.md#quick-start), [deploy](../../README.md#deploy-agents), [local Postgres/OpenSearch](../../README.md#local-services-postgresql--opensearch). Document embedding into OpenSearch: [../embedding/README.md](../embedding/README.md).
 
-| File | Purpose |
+## Layout
+
+| Path | Purpose |
 |------|---------|
-| `general_agent.py` | Strands agent factory — Bedrock model + system prompt |
-| `settings.py` | Configuration from environment variables / `.env` |
-| `main.py` | Interactive local CLI |
-| `runtime.py` | AgentCore Runtime entry point (`/invocations`, `/ping`) |
-| `Dockerfile` | ARM64 container image for AgentCore |
-| `pyproject.toml` | Dependencies and package metadata |
+| `core/agent.py` | General Q&A agent factory |
+| `core/kb_agent.py` | Knowledge-base agent — OpenSearch retrieval tool |
+| `core/knowledge_base.py` | Bedrock query embedding + OpenSearch k-NN search |
+| `configs/settings.py` | Settings from env / `.env` |
+| `cmd/main.py` | Interactive local CLI (direct Bedrock) |
+| `cmd/kb_main.py` | Interactive CLI for the knowledge-base agent |
+| `cmd/test_runtime.py` | Interactive CLI against deployed AgentCore runtime |
+| `runtimes/simple.py` | Production HTTP entry point (`/invocations`, `/ping`) |
+| `runtimes/knowledge_base.py` | KB agent HTTP entry point (OpenSearch retrieval) |
+| `Dockerfile` | ARM64 container for AgentCore |
 
 ## Setup
 
 ```bash
 cd src/agents
 uv sync
-cp .env.example .env
+cp .env.example .env   # optional; aws configure / IAM also works
 ```
 
-Edit `.env` with your Bedrock model and AWS credentials (or rely on `aws configure` / IAM role).
+Or from repo root: `make sync`.
 
 ### Environment variables
 
@@ -31,58 +37,76 @@ Edit `.env` with your Bedrock model and AWS credentials (or rely on `aws configu
 | `BEDROCK_REGION` | `ap-southeast-1` | AWS region for Bedrock |
 | `BEDROCK_TEMPERATURE` | *(unset)* | Optional sampling temperature |
 | `BEDROCK_MAX_TOKENS` | *(unset)* | Optional max output tokens |
+| `EMBEDDING_MODEL_ID` | `cohere.embed-multilingual-v3` | Cohere model for KB query embeddings |
+| `OPENSEARCH_URL` | `http://localhost:9200` | OpenSearch endpoint (index from embedding service) |
+| `OPENSEARCH_INDEX_NAME` | `nam-documents` | k-NN index name |
+| `KB_SEARCH_TOP_K` | `5` | Default chunks retrieved per search |
 
-Aliases `STRANDS_MODEL_ID`, `AWS_REGION`, and `BEDROCK_REGION` are also accepted.
-
-When deployed via Terraform, `BEDROCK_MODEL_ID`, `BEDROCK_REGION`, and optional tuning vars are injected into the container by `infra/agent_runtime.tf`.
+Aliases: `STRANDS_MODEL_ID`, `AWS_REGION`. Deployed containers get Bedrock chat vars from Terraform (`infra/agent_runtime.tf`). Index documents first via [embedding package](../embedding/README.md).
 
 ## Local usage
+
+Makefile wrappers: `make cli`, `make http`, `make ping`, `make invoke-local` (from repo root).
 
 ### Interactive CLI
 
 ```bash
-uv run python main.py
+uv run python -m cmd.main
 ```
 
-Type questions at the `You:` prompt. Exit with `exit` or `quit`.
+### AgentCore HTTP server
 
-### Test deployed AgentCore Runtime (aioboto3)
-
-Interactive CLI against a live AgentCore Runtime ARN (same REPL UX as `main.py`):
+Same contract as production, port `8080`:
 
 ```bash
-uv run python test_runtime.py arn:aws:bedrock-agentcore:ap-southeast-1:123456789012:runtime/...
-# or
-export AGENT_RUNTIME_ARN="$(terraform -chdir=../../infra output -raw agent_runtime_arn)"
-uv run python test_runtime.py
+uv run python -m runtimes.simple
 ```
 
-Requires `bedrock-agentcore:InvokeAgentRuntime` on your AWS credentials. Region is parsed from the ARN, or override with `--region`.
-
-### AgentCore HTTP server (local)
-
-Runs the same entry point used in production on port 8080:
-
 ```bash
-uv run python runtime.py
-```
-
-Test with curl:
-
-```bash
-# Health check
 curl http://localhost:8080/ping
-
-# Invoke
 curl -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
   -d '{"prompt": "What is machine learning?"}'
 ```
 
-### Use the agent in code
+### Knowledge-base agent
+
+Uses the `search_knowledge_base` tool to retrieve chunks from OpenSearch (same index as [embedding service](../embedding/README.md)). Start OpenSearch and index documents before testing.
+
+```bash
+# Interactive CLI
+uv run python -m cmd.kb_main
+
+# HTTP runtime (same /invocations contract, port 8080)
+uv run python -m runtimes.knowledge_base
+```
+
+```bash
+curl -X POST http://localhost:8080/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Summarize what our policy documents say about remote work."}'
+```
+
+### Test deployed AgentCore Runtime
+
+Requires `bedrock-agentcore:InvokeAgentRuntime` — see [invoke policy](../../README.md#test-the-deployed-agent).
+
+```bash
+# from repo root
+make test-runtime
+
+# or manually from src/agents/
+export AGENT_RUNTIME_ARN="$(terraform -chdir=../../infra output -raw agent_runtime_arn)"
+uv run python -m cmd.test_runtime
+uv run python -m cmd.test_runtime --region ap-southeast-1 "$AGENT_RUNTIME_ARN"
+```
+
+One-shot smoke test: `make invoke PROMPT="..."` ([../../README.md](../../README.md#test-the-deployed-agent)).
+
+### Use in code
 
 ```python
-from general_agent import create_agent
+from core.agent import create_agent
 
 agent = create_agent()
 result = agent("Explain quantum computing in one paragraph.")
@@ -91,61 +115,39 @@ print(result.message)
 
 ## AgentCore Runtime
 
-`runtime.py` uses the [`bedrock-agentcore`](https://pypi.org/project/bedrock-agentcore/) Python SDK — not the AgentCore CLI. It wraps `create_agent()` with a `@app.entrypoint` handler.
+Production container entry point is selected at **image build time** via `RUNTIME_MODULE` (`runtimes.simple` or `runtimes.knowledge_base`). Local: `make http` / `make kb-http`. Deploy: `make deploy-simple` / `make deploy-kb`.
 
-**Request payload:**
+| | |
+|---|---|
+| Request | `{"prompt": "..."}` |
+| Response | `{"result": "..."}` or `{"error": "..."}` |
+| Health | `GET /ping` |
 
-```json
-{ "prompt": "Your question here" }
-```
+**Container requirements:** `linux/arm64`, port `8080`, non-root user, endpoints above.
 
-**Response:**
-
-```json
-{ "result": "Agent answer text..." }
-```
-
-### Container requirements
-
-AgentCore Runtime enforces:
-
-- **Architecture:** `linux/arm64`
-- **Port:** 8080
-- **Endpoints:** `POST /invocations`, `GET /ping`
-- **User:** non-root (configured in `Dockerfile`)
-
-Build and test locally:
+Local image build:
 
 ```bash
-docker buildx build --platform linux/arm64 -t nam-agents:local --load .
+docker buildx build --platform linux/arm64 \
+  --build-arg RUNTIME_MODULE=runtimes.knowledge_base \
+  -t nam-agents-kb:local --load .
 docker run --platform linux/arm64 -p 8080:8080 \
   -e AWS_REGION=ap-southeast-1 \
   -e BEDROCK_MODEL_ID=apac.anthropic.claude-sonnet-4-20250514-v1:0 \
-  nam-agents:local
+  -e EMBEDDING_MODEL_ID=cohere.embed-multilingual-v3 \
+  -e OPENSEARCH_URL=http://host.docker.internal:9200 \
+  -e OPENSEARCH_INDEX_NAME=nam-documents \
+  nam-agents-kb:local
 ```
 
-Deploy to AWS is handled from the repo root — see [../../README.md](../../README.md) and `scripts/deploy-image.sh`.
+Deploy to AWS: [../../README.md#deploy-agents](../../README.md#deploy-agents) — `make deploy-simple` / `make deploy-kb`. KB stack: set `opensearch_url` in `infra/kb/terraform.tfvars`.
 
 ## Extending the agent
 
-### Change the system prompt
-
-Edit `SYSTEM_PROMPT` in `general_agent.py`.
-
-### Add tools or a different model
-
-Use Strands APIs inside `create_agent()` in `general_agent.py`. The runtime entry point in `runtime.py` can stay thin — it only forwards the `prompt` field to the agent.
-
-### Add a new agent
-
-1. Create a new module (e.g. `research_agent.py`) with its own `create_agent()`.
-2. Add a matching `runtime_*.py` entry point or parameterize `runtime.py`.
-3. Add a separate ECR image / Terraform runtime resource if deploying independently.
+- **System prompt** — edit `SYSTEM_PROMPT` in `core/agent.py`
+- **Tools / model** — extend `create_agent()` in `core/agent.py`; keep `runtimes/` thin
+- **New agent** — add `core/<name>_agent.py` + `runtimes/<name>.py`; add a stack under `infra/<slug>/` calling `modules/agent-runtime`
 
 ## Dependencies
 
-- `strands-agents` — agent framework and Bedrock model integration
-- `pydantic-settings` — typed settings from env
-- `bedrock-agentcore` — AgentCore Runtime HTTP server (production entry point)
-
-Managed with [uv](https://docs.astral.sh/uv/). Lockfile: `uv.lock`.
+`strands-agents`, `pydantic-settings`, `bedrock-agentcore` — managed with [uv](https://docs.astral.sh/uv/) (`uv.lock`).

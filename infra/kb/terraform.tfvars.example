@@ -1,0 +1,25 @@
+region       = "ap-southeast-1"
+project_name = "nam_agents"
+image_tag    = "latest"
+
+# Optional: pin a suffix shared with infra/simple for consistent naming
+# name_suffix         = "a1b2c3d4"
+# agent_runtime_name  = "nam_agents_a1b2c3d4_kb"
+# ecr_repository_name = "nam-agents-a1b2c3d4-kb"
+
+bedrock_model_id = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
+# bedrock_temperature = "0.3"
+# bedrock_max_tokens  = "4096"
+
+# OpenSearch must be reachable from AgentCore (PUBLIC network mode)
+embedding_model_id    = "cohere.embed-multilingual-v3"
+embedding_dim         = 1024
+opensearch_url        = "https://search-REPLACE_ME.ap-southeast-1.es.amazonaws.com"
+opensearch_index_name = "nam-documents"
+kb_search_top_k       = 5
+
+tags = {
+  Project = "nam-agents"
+  Runtime = "kb"
+  Env     = "dev"
+}

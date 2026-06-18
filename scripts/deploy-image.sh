@@ -12,10 +12,12 @@ set -euo pipefail
 REGION="${1:-ap-southeast-1}"
 ECR_REPO_URL="${2:?ECR repository URL required (e.g. 123456789012.dkr.ecr.ap-southeast-1.amazonaws.com/nam-agents-general)}"
 IMAGE_TAG="${3:-latest}"
+RUNTIME_MODULE="${4:-runtimes.simple}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_DIR="$(cd "$SCRIPT_DIR/../src/agents" && pwd)"
-INFRA_DIR="$(cd "$SCRIPT_DIR/../infra" && pwd)"
+RUNTIME="${RUNTIME:-simple}"
+INFRA_DIR="${INFRA_DIR:-$(cd "$SCRIPT_DIR/../infra/$RUNTIME" && pwd)}"
 ACCOUNT_ID="$(echo "$ECR_REPO_URL" | cut -d. -f1)"
 REPO_NAME="$(basename "$ECR_REPO_URL")"
 BUILDX_BUILDER="nam-agents-builder"
@@ -30,7 +32,9 @@ echo "==> Building ARM64 image from $AGENT_DIR"
 cd "$AGENT_DIR"
 uv lock
 docker buildx create --use --name "$BUILDX_BUILDER" 2>/dev/null || docker buildx use "$BUILDX_BUILDER"
-docker buildx build --platform linux/arm64 -t "${ECR_REPO_URL}:${IMAGE_TAG}" --load .
+docker buildx build --platform linux/arm64 \
+  --build-arg RUNTIME_MODULE="$RUNTIME_MODULE" \
+  -t "${ECR_REPO_URL}:${IMAGE_TAG}" --load .
 
 echo "==> Logging in to ECR ($REGION)"
 aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"

@@ -10,7 +10,8 @@ PROMPT="${1:?Usage: $0 \"your question\"}"
 REGION="${AWS_REGION:-ap-southeast-1}"
 RUNTIME_ARN="${AGENT_RUNTIME_ARN:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INFRA_DIR="$(cd "$SCRIPT_DIR/../infra" && pwd)"
+RUNTIME="${RUNTIME:-kb}"
+INFRA_DIR="${INFRA_DIR:-$(cd "$SCRIPT_DIR/../infra/$RUNTIME" && pwd)}"
 
 if [[ -z "$RUNTIME_ARN" ]]; then
   RUNTIME_ARN="$(terraform -chdir="$INFRA_DIR" output -raw agent_runtime_arn 2>/dev/null || true)"

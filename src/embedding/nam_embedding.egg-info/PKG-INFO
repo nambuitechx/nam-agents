@@ -1,0 +1,89 @@
+Metadata-Version: 2.4
+Name: nam-embedding
+Version: 0.1.0
+Summary: Async embedding service for OpenSearch (Bedrock Cohere + FastAPI)
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: aioboto3>=13.0.0
+Requires-Dist: aiofiles>=24.0.0
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: opensearch-py[async]>=2.8.0
+Requires-Dist: pydantic-settings>=2.0.0
+Requires-Dist: pypdf>=5.0.0
+Requires-Dist: python-docx>=1.1.0
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: uvicorn[standard]>=0.32.0
+
+# Embedding service and server
+
+Async document embedding with **Amazon Bedrock Cohere** (`cohere.embed-multilingual-v3`) and **OpenSearch**.
+
+## Setup
+
+```bash
+cd src/embedding
+cp .env.example .env
+uv sync
+```
+
+Start local OpenSearch from the repo root:
+
+```bash
+make up
+```
+
+## CLI
+
+```bash
+# Embed a file (client-provided UUID)
+uv run python -m cmd.cli embed --file ./sample.md --document-id 550e8400-e29b-41d4-a716-446655440000
+
+# List all indexed documents
+uv run python -m cmd.cli list --all
+
+# List chunks for a document
+uv run python -m cmd.cli list --document-id 550e8400-e29b-41d4-a716-446655440000
+
+# Remove a document
+uv run python -m cmd.cli remove --document-id 550e8400-e29b-41d4-a716-446655440000
+```
+
+Supported formats: `.txt`, `.md`, `.pdf`, `.docx`, `.doc` (legacy `.doc` requires `antiword`).
+
+## FastAPI server
+
+```bash
+uv run python -m api.server
+# → http://localhost:8090
+```
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | OpenSearch health |
+| `POST` | `/documents` | multipart: `document_id`, `file`, optional `replace` |
+| `DELETE` | `/documents/{document_id}` | Remove all chunks |
+| `GET` | `/documents` | List indexed documents |
+| `GET` | `/documents/{document_id}/chunks` | List chunks |
+
+Example upload:
+
+```bash
+curl -X POST http://localhost:8090/documents \
+  -F "document_id=550e8400-e29b-41d4-a716-446655440000" \
+  -F "file=@sample.md"
+```
+
+## Configuration
+
+See [`.env.example`](.env.example). Defaults match Bedrock Cohere limits:
+
+- Region: `ap-southeast-1`
+- Model: `cohere.embed-multilingual-v3`
+- Embedding dim: `1024`
+- Max batch: `96` texts per Bedrock call
+- Max chars per chunk: `2048`
+
+## Related docs
+
+- [Repo README](../../README.md) — Makefile, local services
+- [Agents package](../agents/README.md) — main Q&A agent
